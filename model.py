@@ -3,8 +3,8 @@ import os
 import torch.nn as nn
 import torch.nn.init as init
 
+from dataset import *
 from distance import *
-from load_data import encoded_charset
 from uitls import *
 
 best_gamma = [1, 5, 10]
@@ -12,62 +12,56 @@ best_dim = [50, 75, 100, 200]
 best_learning_rate = [0.001, 0.01, 0.1]
 
 
-# TODO
-# self.attr_embedding=nn.Parameter(torch.Tensor(, features_dim))
-# self.char_embedding = nn.Parameter(torch.Tensor(input_samples, features_dim))
+# TODO 不要使用160维度，显存不足
 
 class Model(nn.Module):
-    def __init__(self, gamma=1, input_samples_dim=None, features_dim=50,
-                 dis=l1_norm, device=None):
-        """
-        :param input_samples_dim: 输入维度
-        :param gamma: 超参数
-        :param features_dim:特征维度，矩阵的列数
-        :param use_f_type: 属性嵌入的聚合函数
-        """
+    def __init__(self, entity_count: int, relation_count: int, device, alpha: dict, norm=1, dim=50, margin=1.0):
         super(Model, self).__init__()
-        assert input_samples_dim is not None
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else device
-
-        # 指定大小，如果写[xx,xx]就是指定值了
-        self.entity_embeddings = nn.Parameter(torch.Tensor(input_samples_dim, features_dim))
-        self.rel_embeddings = nn.Parameter(torch.Tensor(1, features_dim))
-        self.dis = dis
-        self.input_samples_dim = input_samples_dim
-        self.features_dim = features_dim
-        self.gamma = gamma
+        self.entities_emb = nn.Parameter(torch.Tensor(entity_count, dim))
+        self.rel_embeddings = nn.Parameter(torch.Tensor(relation_count, dim))
+        self.norm = norm
+        self.entity_count = entity_count
+        self.features_dim = dim
+        self.margin = margin
+        # 按照关系id生成tensor
+        self.alpha = torch.Tensor([alpha[i] for i in range(relation_count)]).float().to(device).view(-1, 1)
+        self.criterion = nn.MarginRankingLoss(margin=margin, reduction='none')
 
         self.reset_parameters()
 
-    def forward(self, rel_triples: torch.Tensor, cor_rel_triples):
-        if not isinstance(rel_triples, torch.Tensor):
-            rel_triples = torch.Tensor(rel_triples).to(self.device).type(torch.int32)
-        # l2正则化
-        # self.entity_embeddings.data = self.entity_embeddings / torch.norm(self.entity_embeddings, dim=1). \
-        #     view(self.entity_embeddings.shape[0], 1).to(self.device)
+    def predict(self, triplets: torch.LongTensor):
+        return self._distance(triplets)
 
-        r = self.rel_embeddings  # 只有一个r
-        h = rel_triples[:, 0].long()
-        h = self.entity_embeddings[h, :]
-        t = rel_triples[:, 1].long()
-        t = self.entity_embeddings[t, :]
-        # 会自动广播，导致维度一致
-        ch, cr, ct = get_structure_corrupted(h, r, t, self.entity_embeddings, self.device)
-        # zero = torch.zeros(self.input_samples_dim, 1).to(self.device)
-        rt = torch.max(self.dis(h + r - t) - self.dis(ch + cr - ct) + self.gamma, torch.zeros(1).to(self.device))
-        # rt为 a x 1,表示每一组h r t关系的距离
-        # rt = torch.max(self.dis(h + r - t) - self.dis(ch + cr - ct) + self.gamma, torch.Tensor([0]).to(self.device))
-        return torch.sum(rt, dim=0)
+    def forward(self, positive_triplets: torch.LongTensor, negative_triplets: torch.LongTensor):
+        with torch.no_grad():
+            self.entities_emb.data = self.entities_emb.data / torch.norm(self.entities_emb, p=2, dim=1).view(-1, 1)
+
+        pd = self._distance(positive_triplets)
+        nd = self._distance(negative_triplets)
+        # r = positive_triplets[:, 1]
+        # factor = self.alpha[r, 0]
+        # rt = torch.max(factor * (pd - nd) + self.margin, torch.zeros(1, device=self.device))
+        rt = torch.max(pd - nd + self.margin, torch.zeros(1, device=self.device))
+        # target = torch.tensor([-1], dtype=torch.long, device=self.device)
+        # rt = self.criterion(self.dis(h + r - t), self.dis(ch + cr - ct), target)
+        return rt
+        # 不是一个值
 
     def reset_parameters(self):
-        # 更适用与relu,默认使用kaiming
-        # init.kaiming_uniform()
-        # tanh使用Xavier
-        # nn.init.kaiming_uniform(self.entity_embeddings)
         uniform_range = 6 / np.sqrt(self.features_dim)
-        init.uniform_(self.entity_embeddings, -uniform_range, uniform_range)
+        init.uniform_(self.entities_emb, -uniform_range, uniform_range)
         init.uniform_(self.rel_embeddings, -uniform_range, uniform_range)
-        nn.Embedding
+        self.rel_embeddings.data = self.rel_embeddings / torch.norm(self.rel_embeddings, p=1, dim=1).view(-1, 1)
+
+    def _distance(self, triples: torch.LongTensor):
+        assert triples.size(1) == 3
+        heads = triples[:, 0]
+        relations = triples[:, 1]
+        tails = triples[:, 2]
+        return (self.entities_emb[heads, :] + self.rel_embeddings[relations, :]
+                - self.entities_emb[tails, :]).norm(p=self.norm, dim=1)
+
     def save(self, path):
         """
         存储所有
@@ -92,7 +86,131 @@ class Model(nn.Module):
             self._parameters[e] = torch.load(path + f'/{e}.torch_save')
 
 
-# max_char_length 表示属性对多这么长，后面会忽略
+class AttributeModel(nn.Module):
+    def __init__(self, entity_count_a: int, entity_count_b: int, merged_rel_size: int,
+                 encoded_charset: dict, device,
+                 attr_lookup_table_a: torch.LongTensor, attr_lookup_table_b: torch.LongTensor, norm=1, dim=50,
+                 max_char_length=50,
+                 margin=1.0, use_lstm=True, train_first_set_a=True):
+        # attr_lookup_table 存储每个属性编号对应的char编号，长度为max_char_length，填充0
+        super(AttributeModel, self).__init__()
+        self.device = device
+        self.charset_size = len(encoded_charset)
+        self.encoded_charset = encoded_charset
+        self.norm = norm
+        self.max_char_length = max_char_length
+        self.features_dim = dim
+        self.margin = margin
+        self.use_lstm = use_lstm
+        self.train_first_set_a = train_first_set_a
+        self.merged_rel_size = merged_rel_size
+
+        self.entity_count_a = entity_count_a
+        self.entity_count_b = entity_count_b
+        self.attr_lookup_table_a = attr_lookup_table_a[:, :max_char_length]
+        self.attr_lookup_table_b = attr_lookup_table_b[:, :max_char_length]
+
+        self.entities_emb_a = nn.Parameter(torch.Tensor(entity_count_a, dim))
+        self.entities_emb_b = nn.Parameter(torch.Tensor(entity_count_b, dim))
+        self.rel_embeddings = nn.Parameter(torch.Tensor(merged_rel_size, dim))
+        self.char_embeddings = nn.Parameter(torch.Tensor(self.charset_size, dim))
+        if use_lstm:
+            self.lstm = nn.LSTM(dim, dim)
+
+        self.criterion = nn.MarginRankingLoss(margin=margin, reduction='none')
+        self.reset_parameters()
+
+    def attr_embedding(self, attr: torch.Tensor):
+        """
+        使用最长长度，避免损失信息，但是很大
+        :param attr:B x self.max_char_length，存储字符串字符索引列表
+        :return: attr嵌入
+        """
+        idx = attr.view(-1, 1)
+        emb = self.char_embeddings[idx, :].view(self.max_char_length, attr.shape[0], self.features_dim)
+        if self.use_lstm:
+            output = self.lstm(emb)[0]
+            output = output[-1, :, :]  # 获得最后一个输出
+            return output
+        else:
+            output = torch.sum(emb, dim=0)
+            return output
+
+    def predict(self, triplets: torch.LongTensor, first_entities=True):
+        """
+        :param first_entities:
+        :param triplets:Bx3代表h r t
+        :return:
+        """
+        if first_entities:
+            return self._distance(triplets, self.entities_emb_a, self.attr_lookup_table_a)
+        else:
+            return self._distance(triplets, self.entities_emb_b, self.attr_lookup_table_b)
+
+    def forward(self, positive_triplets: torch.LongTensor, negative_triplets: torch.LongTensor):
+        if self.train_first_set_a:
+            with torch.no_grad():
+                self.entities_emb_a.data = self.entities_emb_a.data / torch.norm(self.entities_emb_a, p=2, dim=1).view(
+                    -1, 1)
+            pd = self._distance(positive_triplets, self.entities_emb_a, self.attr_lookup_table_a)
+            nd = self._distance(negative_triplets, self.entities_emb_a, self.attr_lookup_table_a)
+        else:
+            with torch.no_grad():
+                self.entities_emb_b.data = self.entities_emb_b.data / torch.norm(self.entities_emb_b, p=2, dim=1).view(
+                    -1, 1)
+            pd = self._distance(positive_triplets, self.entities_emb_b, self.attr_lookup_table_b)
+            nd = self._distance(negative_triplets, self.entities_emb_b, self.attr_lookup_table_b)
+
+        rt = torch.max(pd - nd + self.margin, torch.zeros(1, device=self.device))
+        # rt = torch.max(pd + self.margin, torch.zeros(1, device=self.device))
+        return rt
+        # 不是一个值
+
+    def reset_parameters(self):
+        uniform_range = 6 / np.sqrt(self.features_dim)
+        init.uniform_(self.rel_embeddings, -uniform_range, uniform_range)
+        init.uniform_(self.entities_emb_a, -uniform_range, uniform_range)
+        init.uniform_(self.entities_emb_b, -uniform_range, uniform_range)
+        self.rel_embeddings.data = self.rel_embeddings / torch.norm(self.rel_embeddings, p=1, dim=1).view(-1, 1)
+        # 初始化字符嵌入，使用onehot
+        self.char_embeddings.data = torch.eye(self.charset_size, self.features_dim)
+
+    def _distance(self, triplets: torch.LongTensor, entities_emb, attr_lookup_table):
+        """
+        distance 会在train的情况下，自动进行归一化实体嵌入
+        :param triplets:
+        :return:
+        """
+        assert triplets.size(1) == 3
+        heads = triplets[:, 0]
+        relations = triplets[:, 1]
+        tails = triplets[:, 2]
+        tails = attr_lookup_table[tails, :]
+        return (entities_emb[heads, :] + self.rel_embeddings[relations, :]
+                - self.attr_embedding(tails)).norm(p=self.norm, dim=1)
+
+    def save(self, path):
+        """
+        存储所有
+        :param path:
+        :return:
+        """
+        # Module对象显式定义的Parameter类型的属性会放到self._parameters字典中,是有序字典
+        if not os.path.exists(path):
+            os.mkdir(path)
+        for e in self._parameters:
+            torch.save(self._parameters[e], path + f'/{e}.torch_save')
+
+    def load(self, path):
+        """
+        读取所有
+        :param path:
+        :return:
+        """
+        if not os.path.exists(path):
+            os.mkdir(path)
+        for e in self._parameters:
+            self._parameters[e] = torch.load(path + f'/{e}.torch_save')
 
 
 class AttrModel(nn.Module):
@@ -197,9 +315,9 @@ class JointLearning2(nn.Module):
         super(JointLearning2, self).__init__()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else device
         self.charset_size = len(encoded_charset)
-        self.KG1 = Model(gamma=gamma, dis=dis, features_dim=features_dim, input_samples_dim=input_samples_dim1,
+        self.KG1 = Model(entity_num=input_samples_dim1, margin=gamma, features_dim=features_dim, dis=dis,
                          device=device).to(device)
-        self.KG2 = Model(gamma=gamma, dis=dis, features_dim=features_dim, input_samples_dim=input_samples_dim2,
+        self.KG2 = Model(entity_num=input_samples_dim2, margin=gamma, features_dim=features_dim, dis=dis,
                          device=device).to(device)
         self.attr = AttrModel(gamma=gamma, use_lstm=use_lstm, relation_num=relation_num, dis=dis,
                               features_dim=features_dim,
@@ -272,6 +390,22 @@ class JointLearning2(nn.Module):
 
 if __name__ == '__main__':
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    train_generator = RelationDataset(attr_rel_tw)
+    train_generator = torch.utils.data.DataLoader(train_generator, batch_size=64)
+    model1 = Model(entity_count=len(id2URL_tw), relation_count=len(id2URL_tw), device=device, alpha=alpha_tw).to(device)
+    aaa = torch.Tensor(attrs_only_tw).long().to(device)
+    model2 = AttributeModel(len(attr_rel_tw), encoded_charset, device, aaa).to(device)
+    # optimizer = torch.optim.Adam([model1.entities_emb, model2.rel_embeddings, model2.char_embeddings], lr=1e-3)
+    # model2.register_parameter('eee1', model1.entities_emb)
+    optimizer = torch.optim.Adam(list(model2.parameters()) + [model1.entities_emb], lr=1e-3)
+    for i in train_generator:
+        # print(model.attr_embedding(aaa[i[-1], :]))
+        optimizer.zero_grad()
+        triples = torch.stack([i[0], i[1], i[2]], dim=1)
+        loss = model2(triples, triples, model1.entities_emb)
+        print(loss.sum().item())
+        loss.mean().backward()
+        optimizer.step()
     # rel_triples = torch.tensor(rel_tw, dtype=torch.int32, device=device)
     # mxx = max([int(i) for i in id2URL_tw])
     # model = Model(input_samples_dim=mxx + 1).to(device)  # 因为编号不是从0开始，所以要有空闲部分

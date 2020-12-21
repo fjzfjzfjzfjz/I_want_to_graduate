@@ -3,6 +3,15 @@ import pickle
 
 import numpy as np
 
+"""
+rel,URL2id,id2URL 的id均使用int，并扩展关注关系，并去除无关注或被关注的实体，后进行重新编号
+xxx_final.pickle 即处理后的版本
+xxx_expanded.pickle 即扩展的版本
+xxx.pickle没有去除无效实体的版本，但是进行了重新编号
+xxx.ori没有进行重新编号
+因为考虑到论文编写的需要，所以pickle包括 普通；扩展关注；扩展关注并去除无关注或被关注的的实体，三种。均为int id、均重新编号
+处理代码在处理代码中，很乱
+"""
 col_tw = ['用户ID', 'URL', '推特里的userid', '昵称', '个人describe', '开通推特时间', 'location', 'tweet总数',
           'following总数', 'follower总数', 'favorites总数']
 col_fq = ['number', 'id', 'username', 'Tips amount', 'Followers amount', 'Following amount', 'Facebook_url',
@@ -15,23 +24,23 @@ char_set_fb = pickle.load(open('preprocessed_data/facebook/char_set.pickle', 'rb
 userinfo_list_fb = pickle.load(open('preprocessed_data/facebook/userinfo_all_final.pickle', 'rb'))
 userinfo_dict_fb = pickle.load(open('preprocessed_data/facebook/userinfo_dict.pickle', 'rb'))
 userinfo_all_final_fb = pickle.load(open('preprocessed_data/facebook/userinfo_all_final.pickle', 'rb'))
-URL2id_fb = pickle.load(open('preprocessed_data/facebook/URL2id.pickle', 'rb'))
-id2URL_fb = pickle.load(open('preprocessed_data/facebook/id2URL.pickle', 'rb'))
-rel_fb = pickle.load(open('preprocessed_data/facebook/rel.pickle', 'rb'))
+URL2id_fb = pickle.load(open('preprocessed_data/facebook/URL2id_final.pickle', 'rb'))
+id2URL_fb = pickle.load(open('preprocessed_data/facebook/id2URL_final.pickle', 'rb'))
+rel_fb = pickle.load(open('preprocessed_data/facebook/rel_final.pickle', 'rb'))
 attr_rel_fb = pickle.load(open('preprocessed_data/facebook/attr_rel.pickle', 'rb'))
 
 char_set_fq = pickle.load(open('preprocessed_data/foursquare/char_set.pickle', 'rb'))
 userinfo_all_final_fq = pickle.load(open('preprocessed_data/foursquare/userinfo_all_final.pickle', 'rb'))
-URL2id_fq = pickle.load(open('preprocessed_data/foursquare/URL2id.pickle', 'rb'))
-id2URL_fq = pickle.load(open('preprocessed_data/foursquare/id2URL.pickle', 'rb'))
-rel_fq = pickle.load(open('preprocessed_data/foursquare/rel.pickle', 'rb'))
+URL2id_fq = pickle.load(open('preprocessed_data/foursquare/URL2id_final.pickle', 'rb'))
+id2URL_fq = pickle.load(open('preprocessed_data/foursquare/id2URL_final.pickle', 'rb'))
+rel_fq = pickle.load(open('preprocessed_data/foursquare/rel_final.pickle', 'rb'))
 attr_rel_fq = pickle.load(open('preprocessed_data/foursquare/attr_rel.pickle', 'rb'))
 
 char_set_tw = pickle.load(open('preprocessed_data/twitter/char_set.pickle', 'rb'))
 userinfo_all_final_tw = pickle.load(open('preprocessed_data/twitter/userinfo_all_final.pickle', 'rb'))
-URL2id_tw = pickle.load(open('preprocessed_data/twitter/URL2id.pickle', 'rb'))
-id2URL_tw = pickle.load(open('preprocessed_data/twitter/id2URL.pickle', 'rb'))
-rel_tw = pickle.load(open('preprocessed_data/twitter/rel.pickle', 'rb'))
+URL2id_tw = pickle.load(open('preprocessed_data/twitter/URL2id_final.pickle', 'rb'))
+id2URL_tw = pickle.load(open('preprocessed_data/twitter/id2URL_final.pickle', 'rb'))
+rel_tw = pickle.load(open('preprocessed_data/twitter/rel_final.pickle', 'rb'))
 attr_rel_tw = pickle.load(open('preprocessed_data/twitter/attr_rel.pickle', 'rb'))
 
 encoded_charset = pickle.load(open('preprocessed_data/encoded_charset.pickle', 'rb'))
@@ -42,126 +51,92 @@ aligned_fq_tw = pickle.load(open('preprocessed_data/aligned_fq_tw.pickle', 'rb')
 aligned_fb_tw = pickle.load(open('preprocessed_data/aligned_fb_tw.pickle', 'rb'))
 
 
-# 使用数字作为rel，否则无法变成tensor
-# rel_tw = [[int(i[0]), int(i[1])] for i in rel_tw]
-# rel_fq = [[int(i[0]), int(i[1])] for i in rel_fq]
-# rel_fb = [[int(i[0]), int(i[1])] for i in rel_fb]
-# pickle.dump(rel_tw, open('preprocessed_data/twitter/rel.pickle', 'wb'))
-# pickle.dump(rel_fq, open('preprocessed_data/foursquare/rel.pickle', 'wb'))
-# pickle.dump(rel_fb, open('preprocessed_data/facebook/rel.pickle', 'wb'))
-
-# 发现属性有空字符，进行去除
-# attr_rel_tw = [i for i in attr_rel_tw if i[-1].strip() != '']
-# attr_rel_fq = [i for i in attr_rel_fq if i[-1].strip() != '']
-# attr_rel_fb = [i for i in attr_rel_fb if i[-1].strip() != '']
-# pickle.dump(attr_rel_tw, open('preprocessed_data/twitter/attr_rel.pickle', 'wb'))
-# pickle.dump(attr_rel_fq, open('preprocessed_data/foursquare/attr_rel.pickle', 'wb'))
-# pickle.dump(attr_rel_fb, open('preprocessed_data/facebook/attr_rel.pickle', 'wb'))
-# 使用数字作为rel，否则无法变成tensor
-# attr_rel_tw = [[int(i[0]), int(i[1]), i[2]] for i in attr_rel_tw]
-# attr_rel_fq = [[int(i[0]), int(i[1]), i[2]] for i in attr_rel_fq]
-# attr_rel_fb = [[int(i[0]), int(i[1]), i[2]] for i in attr_rel_fb]
-# pickle.dump(attr_rel_tw, open('preprocessed_data/twitter/attr_rel.pickle', 'wb'))
-# pickle.dump(attr_rel_fq, open('preprocessed_data/foursquare/attr_rel.pickle', 'wb'))
-# pickle.dump(attr_rel_fb, open('preprocessed_data/facebook/attr_rel.pickle', 'wb'))
-
-# 预处理出cor，即每一个rel 三元组的cor，否则速度太慢了
-# 使用总体规定头尾，进行加速
-def prepare_cor(rel: list, id2URL: dict, is_attr=False):
-    head = np.random.random() < 0.5
-    rt = []
-    idxs = [int(i) for i in id2URL]
-    ii = 0
-    total = 0
-    # print('head ', head)
-    # TODO 去除错误的反例，即保证反例不会恰好是正例
-    # 首先制作点的出边集合，便于判断
-    if is_attr:
-        dd = {}
-        for i in rel:
-            if i[0] not in dd:
-                dd[i[0]] = {i[1]: i[2]}
-            else:
-                dd[i[0]][i[1]] = i[2]
-        attrs = [i[-1] for i in rel]
-        for i in rel:
-            ii += 1
-            if ii % 10000 == 0:
-                print(f'{ii * 100 / len(rel)}% {ii + 1},{len(rel)}')
-            if head:
-                cc = np.random.choice(idxs, (1,))[0]
-                while cc in dd and i[1] in dd[cc] and dd[cc][i[1]] == i[2]:
-                    cc = np.random.choice(idxs, (1,))[0]
-                rt.append([cc, i[1], i[2]])
-            else:
-                # 属性几乎不可能选到重复的
-                cc = np.random.choice(attrs)
-                rt.append([i[0], i[1], cc])
-    else:
-        dd = {}
-        for i in rel:
-            if i[0] not in dd:
-                dd[i[0]] = set()
-                dd[i[0]].add(i[1])
-            else:
-                dd[i[0]].add(i[1])
-        for i in rel:
-            ii += 1
-            if ii % 10000 == 0:
-                print(f'{ii * 100 / len(rel)}% {ii},{len(rel)}')
-            if head:
-                cc = np.random.choice(idxs)
-                while cc in dd and i[1] in dd[cc]:
-                    cc = np.random.choice(idxs)
-                    total += 1
-                rt.append([cc, i[1]])
-            else:
-                cc = np.random.choice(idxs)
-                while i[0] in dd and cc in dd[i[0]]:
-                    cc = np.random.choice(idxs)
-                    total += 1
-                rt.append([i[0], cc])
-    print(f'重复 {total} 次')
-    return rt, head
+def split_data(data):
+    data = np.array(data)
+    idxs = np.random.randint(0, 10, size=(len(data),))
+    train1 = data[idxs < 8, :].tolist()
+    test1 = data[idxs >= 8, :].tolist()
+    return train1, test1
 
 
-def prepare_cor_wrapper(rel: list, id2URL: dict, is_attr=False):
-    # 调用prepare_cor，并制成，{head：bool,col:list}，只获得替换的那一列，按顺序
-    rt, head = prepare_cor(rel, id2URL, is_attr)
-    # print([i[-1] for i in rt])
-    if head:
-        return {'head': head,
-                'col': [i[0] for i in rt]}
-    else:
-        return {'head': head,
-                'col': [i[-1] for i in rt]}
+train_tw, test_tw = split_data(rel_tw)
+train_fq, test_fq = split_data(rel_fq)
+train_fb, test_fb = split_data(rel_fb)
 
 
-# rel_fq_cor = prepare_cor_wrapper(rel_fq, id2URL_fq, False)
-# rel_tw_cor = prepare_cor_wrapper(rel_tw, id2URL_tw, False)
-# rel_fb_cor = prepare_cor(rel_fb, id2URL_fb, False)
-
-# pickle.dump(rel_fq_cor, open('preprocessed_data/foursquare/rel_fq_cor.pickle', 'wb'))
-# pickle.dump(rel_tw_cor, open('preprocessed_data/twitter/rel_tw_cor.pickle', 'wb'))
-# pickle.dump(rel_fb_cor, open('preprocessed_data/facebook/rel_fb_cor.pickle', 'wb'))
-# attr_rel_fq_cor = prepare_cor(attr_rel_fq, id2URL_fq, True)
-# attr_rel_tw_cor = prepare_cor(attr_rel_tw, id2URL_tw, True)
-# attr_rel_fb_cor = prepare_cor(attr_rel_fb, id2URL_fb, True)
-
-rel_tw_cor = pickle.load(open('preprocessed_data/twitter/rel_tw_cor.pickle', 'rb'))
-rel_fq_cor = pickle.load(open('preprocessed_data/foursquare/rel_fq_cor.pickle', 'rb'))
-rel_fb_cor = pickle.load(open('preprocessed_data/facebook/rel_fb_cor.pickle', 'rb'))
-# 或者产生rel_dict，便于检查是否有关系
-# def get_rel_dict(tt):
-#     rt = {}
-#     for i in tt:
-#         if i[0] not in rt:
-#             rt[i[0]] = {i[1]: 1}
-#         else:
-#             rt[i[0]][i[1]] = 1
+# 获得关系出边的比例，即alpha
+# def get(rel, id2URL):
+#     cc = Counter([i[1] for i in rel])
+#     rt = {i: cc[i] / len(rel) for i in id2URL}
 #     return rt
 #
 #
-# rel_tw_dict = get_rel_dict(rel_tw)
-# rel_fq_dict = get_rel_dict(rel_fq)
-# rel_fb_dict = get_rel_dict(rel_fb)
+# alpha_tw = get(rel_tw, id2URL_tw)
+# alpha_fb = get(rel_fb, id2URL_fb)
+# alpha_fq = get(rel_fq, id2URL_fq)
+
+
+def prepare(data, ll):
+    return data[:ll] + [0] * (ll - len(data))
+
+
+# 将属性字符串全部变成字符的索引集合
+# 对attr_rel_tw进行id编码
+def change(attr_rel):
+    rt = []
+    attrs = []
+    for i in attr_rel:
+        t = [encoded_charset[j] for j in i[-1]]
+        t = prepare(t, 160)
+        rt.append([i[0], i[1], len(attrs)])
+        attrs.append(t)
+    return rt, attrs
+
+
+attr_rel_tw, attrs_only_tw = change(attr_rel_tw)
+attr_rel_fq, attrs_only_fq = change(attr_rel_fq)
+attr_rel_fb, attrs_only_fb = change(attr_rel_fb)
+
+
+def cccount(data):
+    s = set()
+    for i in data:
+        s.add(i[1])
+    return len(s)
+
+
+attr_rel_tw_count = 8
+attr_rel_fq_count = 4
+attr_rel_fb_count = 14
+merged_tw_fq_attr_rel_count = 9
+merged_tw_fb_attr_rel_count = 21
+merged_fb_fq_attr_rel_count = 17
+
+
+# attr_rel_tw_count = cccount(attr_rel_tw)
+# attr_rel_fq_count = cccount(attr_rel_fq)
+# attr_rel_fb_count = cccount(attr_rel_fb)
+# merged_tw_fq_attr_rel_count = cccount(attr_rel_tw + attr_rel_fq)
+# merged_tw_fb_attr_rel_count = cccount(attr_rel_tw + attr_rel_fb)
+# merged_fb_fq_attr_rel_count = cccount(attr_rel_fb + attr_rel_fq)
+
+
+# len(list(filter(lambda x: x <= 100, [len(i) for i in attrs_only_fb])))
+# c = len(list(filter(lambda x: x > 10000, [len(i) for i in attrs_only_fb])))
+# a = len(attrs_only_fb) + len(attrs_only_tw) + len(attrs_only_fq)
+# print((a - c) / a * 100)
+# 先规定为160，进行tw fq测试,tw 160;fq 46;fb 29472
+
+# def prepare_data(tw=False, fb=False, fq=False):
+#     assert tw + fb + fq == 2
+#     ltw = max([len(i) for i in attrs_only_tw])
+#     lfb = max([len(i) for i in attrs_only_fb])
+#     lfq = max([len(i) for i in attrs_only_fq])
+#     if fb is False:
+#         ll = max(ltw, lfq)
+#         a=attrs_only_tw
+#         b=attrs_only_fq
+
+train_attr_tw, test_attr_tw = split_data(attr_rel_tw)
+train_attr_fq, test_attr_fq = split_data(attr_rel_fq)
+train_attr_fb, test_attr_fb = split_data(attr_rel_fb)

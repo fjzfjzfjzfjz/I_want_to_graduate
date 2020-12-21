@@ -4,7 +4,7 @@ import torch
 
 # 都应返回 a x 1,表示每一组h r t关系的距离
 def l1_norm(x):
-    return torch.norm(x, dim=1)
+    return torch.norm(x, p=1, dim=1)
 
 
 def l2_norm(x, sqrt=True):
@@ -16,5 +16,5 @@ def l2_norm(x, sqrt=True):
 
 
 if __name__ == '__main__':
-    a = torch.from_numpy(np.array([1, -1, 2]))
-    print(l2_norm(a))
+    a = torch.from_numpy(np.array([[1, -1, 2]], dtype=np.float32))
+    print(l1_norm(a))

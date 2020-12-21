@@ -69,5 +69,4 @@ pickle.dump(aligned_fb_fq, open('preprocessed_data/aligned_fb_fq.pickle', 'wb'))
 pickle.dump(aligned_fb_tw, open('preprocessed_data/aligned_fb_tw.pickle', 'wb'))
 pickle.dump(aligned_fq_tw, open('preprocessed_data/aligned_fq_tw.pickle', 'wb'))
 
-# 预处理出cor，即每一个rel 三元组的cor，否则速度太慢了
-# 或者产生rel_dict，便于检查是否有关系
+
