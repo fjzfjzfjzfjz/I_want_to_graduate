@@ -25,26 +25,30 @@ def get_structure_corrupted(triples: torch.Tensor, entity_or_attr_count: int, de
     return torch.stack([broken_heads, r, broken_tails], dim=1)
 
 
-def get_attr_corrupted(triples: torch.Tensor, entity_count: int, attr_count:int,device: torch.device):
+def get_attr_corrupted(triples: torch.Tensor, entity_count: int, attr_count: int, device: torch.device):
     h = triples[:, 0]
     r = triples[:, 1]
     t = triples[:, 2]
     head_or_tail = torch.randint(high=2, size=(h.size(0),), device=device)
     random_entities = torch.randint(high=entity_count, size=(h.size(0),), device=device)
-    random_attrs=torch.randint(high=attr_count, size=(h.size(0),), device=device)
+    random_attrs = torch.randint(high=attr_count, size=(h.size(0),), device=device)
     broken_heads = torch.where(head_or_tail == 1, random_entities, h)
     broken_tails = torch.where(head_or_tail == 0, random_attrs, t)
     return torch.stack([broken_heads, r, broken_tails], dim=1)
 
-def plot_loss(ls, ep):
+
+def plot_loss(ep, *ls, **kwargs):
     """
 
     :param ep: 对应的epoch编号
-    :param ls: an array of losses
+    :param ls: many array of losses
     """
     seaborn.set_style("ticks")
-    seaborn.lineplot(ep, ls, legend='full')
-    plt.show()
+    title = kwargs.get('title', 'title')
+    for i in ls:
+        seaborn.lineplot(ep, i, legend='full')
+        plt.title(title)
+        plt.show()
 
 
 if __name__ == '__main__':
@@ -53,3 +57,4 @@ if __name__ == '__main__':
     t = torch.Tensor([[1, 2], [3, 4]])
     e = torch.Tensor([[1, 1], [2, 2], [3, 3]])
     # print(get_structure_corrupted(h, r, t, e, rel_tw_cor))
+    plot_loss([1, 2], [1, 1], [2, 2])

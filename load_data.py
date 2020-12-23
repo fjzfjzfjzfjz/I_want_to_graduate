@@ -1,5 +1,6 @@
 # 划分训练集测试集
 import pickle
+from collections import Counter
 
 import numpy as np
 
@@ -39,16 +40,16 @@ attr_rel_fq = pickle.load(open('preprocessed_data/foursquare/attr_rel.pickle', '
 char_set_tw = pickle.load(open('preprocessed_data/twitter/char_set.pickle', 'rb'))
 userinfo_all_final_tw = pickle.load(open('preprocessed_data/twitter/userinfo_all_final.pickle', 'rb'))
 URL2id_tw = pickle.load(open('preprocessed_data/twitter/URL2id_final.pickle', 'rb'))
-id2URL_tw = pickle.load(open('preprocessed_data/twitter/id2URL_final.pickle', 'rb'))
+id2URL_tw = pickle.load(open('preprocessed_data/twitter/id2URL_ori.pickle', 'rb'))
 rel_tw = pickle.load(open('preprocessed_data/twitter/rel_final.pickle', 'rb'))
 attr_rel_tw = pickle.load(open('preprocessed_data/twitter/attr_rel.pickle', 'rb'))
 
 encoded_charset = pickle.load(open('preprocessed_data/encoded_charset.pickle', 'rb'))
 
 true_URL2id_fb = pickle.load(open('preprocessed_data/facebook/true_URL2id.pickle', 'rb'))
-aligned_fb_fq = pickle.load(open('preprocessed_data/aligned_fb_fq.pickle', 'rb'))
-aligned_fq_tw = pickle.load(open('preprocessed_data/aligned_fq_tw.pickle', 'rb'))
-aligned_fb_tw = pickle.load(open('preprocessed_data/aligned_fb_tw.pickle', 'rb'))
+aligned_fb_fq = pickle.load(open('preprocessed_data/aligned_fb_fq_final.pickle', 'rb'))
+aligned_fq_tw = pickle.load(open('preprocessed_data/aligned_fq_tw_final.pickle', 'rb'))
+aligned_fb_tw = pickle.load(open('preprocessed_data/aligned_fb_tw_final.pickle', 'rb'))
 
 
 def split_data(data):
@@ -82,10 +83,22 @@ def prepare(data, ll):
 
 # 将属性字符串全部变成字符的索引集合
 # 对attr_rel_tw进行id编码
+filters = ['Tweets', 'Following', 'Followers', 'Favorites']
+
+
+def filtering(k, c: str):
+    for i in k:
+        if i in c:
+            c = c.replace(i, '').replace(',', '').strip()
+            return c
+    return c
+
+
 def change(attr_rel):
     rt = []
     attrs = []
     for i in attr_rel:
+        i[-1] = filtering(filters, i[-1])
         t = [encoded_charset[j] for j in i[-1]]
         t = prepare(t, 160)
         rt.append([i[0], i[1], len(attrs)])
@@ -111,7 +124,6 @@ attr_rel_fb_count = 14
 merged_tw_fq_attr_rel_count = 9
 merged_tw_fb_attr_rel_count = 21
 merged_fb_fq_attr_rel_count = 17
-
 
 # attr_rel_tw_count = cccount(attr_rel_tw)
 # attr_rel_fq_count = cccount(attr_rel_fq)
@@ -140,3 +152,24 @@ merged_fb_fq_attr_rel_count = 17
 train_attr_tw, test_attr_tw = split_data(attr_rel_tw)
 train_attr_fq, test_attr_fq = split_data(attr_rel_fq)
 train_attr_fb, test_attr_fb = split_data(attr_rel_fb)
+
+
+# TODO 获得属性关系的比例
+def get(rel1, rel2):
+    cc = Counter([i[1] for i in rel1 + rel2])
+    rt = {i: cc[i] / (len(rel1) + len(rel2)) for i in cc}
+    return rt
+
+
+attr_alpha_tw_fq = get(attr_rel_tw, attr_rel_fq)
+attr_alpha_tw_fb = get(attr_rel_tw, attr_rel_fb)
+attr_alpha_fb_fq = get(attr_rel_fb, attr_rel_fq)
+
+
+# def prepare_aligned_items(data: list,id2URL1,id2URL2):
+#     dd1 = [i[1] for i in data]
+#     dd2={i[1]: i[2] for i in data}
+#
+#     return
+
+# aligned_fq_tw=

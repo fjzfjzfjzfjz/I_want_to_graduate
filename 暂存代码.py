@@ -784,3 +784,179 @@ def get_attr_corrupted(triples: torch.Tensor, entity_count1: int, entity_count2:
             broken_tails_b = torch.where(head_or_tail == 0, random_attrs_b, t)
 
             broken_heads = torch.cat([broken_heads_a, broken_heads_b])
+
+
+class AttrModel(nn.Module):
+    def __init__(self, gamma=1, relation_num=22, features_dim=50, use_lstm=False,
+                 dis=l1_norm, device=None, max_char_length=100):
+        super(AttrModel, self).__init__()
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else device
+        self.charset_size = len(encoded_charset)
+        self.char_embeddings = nn.Parameter(torch.Tensor(self.charset_size, features_dim))
+        self.rel_attr_embeddings = nn.Parameter(torch.Tensor(relation_num, features_dim))
+        self.dis = dis
+        self.max_char_length = max_char_length
+        self.input_samples_dim = relation_num
+        self.features_dim = features_dim
+        self.gamma = gamma
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.uniform_(self.char_embeddings)
+        nn.init.uniform_(self.rel_attr_embeddings)
+
+    def forward(self, rel_attr_triples: list, entity_embeddings):
+        """
+        :param rel_attr_triples: 两个KG一起的属性元组
+        """
+        rt = []
+        rel = []
+        # 使用sum求和
+        for triple in rel_attr_triples:
+            rel.append([triple[0], triple[1]])
+            aa = np.array([encoded_charset[i] for i in triple[-1]], dtype=np.int64)
+            attr_embeddings = torch.index_select(self.char_embeddings, 0, torch.from_numpy(aa).to(self.device))
+            attr_embeddings = torch.sum(attr_embeddings, dim=0)
+            rt.append(attr_embeddings.view(1, -1))
+        rel = torch.from_numpy(np.array(rel, dtype=np.int64)).to(self.device)
+        t = torch.cat(rt, dim=0)
+        h = torch.index_select(rel, 1, torch.tensor([0]).to(self.device))  # 获得第1列
+        h = torch.index_select(entity_embeddings, 0, h.view([h.shape[0]]).long())  # view变成标量
+        r = torch.index_select(rel, 1, torch.tensor([1]).to(self.device))  # 获得第2列
+        r = torch.index_select(self.rel_attr_embeddings, 0, r.view([t.shape[0]]).type(torch.int64))  # view变成标量
+        rt = torch.max(self.dis(h + r - t) + self.gamma, torch.Tensor([0]).to(self.device))
+        return torch.sum(rt)
+
+    def save(self, path):
+        if not os.path.exists(path):
+            os.mkdir(path)
+        for e in self._parameters:
+            torch.save(self._parameters[e], path + f'/{e}.torch_save')
+
+    def load(self, path):
+        if not os.path.exists(path):
+            os.mkdir(path)
+        for e in self._parameters:
+            self._parameters[e] = torch.load(path + f'/{e}.torch_save')
+
+
+# 单独的loss
+class JointLearning1(nn.Module):
+    def __init__(self, char_embeddings, entity_embeddings, lstm=None):
+        super(JointLearning1, self).__init__()
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else device
+        self.char_embeddings = char_embeddings
+        # self.entity_emb_KG1 = entity_emb_KG1
+        # self.entity_emb_KG2 = entity_emb_KG2
+        self.entity_embeddings = entity_embeddings
+        self.lstm = lstm
+
+    def forward(self, rel_attr_triples: list):
+        """
+        对于所有属性三元组，就散cos 相似度，使用attr嵌入
+        :return:
+        """
+        if self.lstm:
+            # 使用lstm
+            pass
+        else:
+            rt = []
+            rel = []
+            # 使用sum求和
+            for triple in rel_attr_triples:
+                rel.append([triple[0], triple[1]])
+                aa = np.array([encoded_charset[i] for i in triple[-1]], dtype=np.int64)
+                attr_embeddings = torch.index_select(self.char_embeddings, 0, torch.from_numpy(aa).to(self.device))
+                attr_embeddings = torch.sum(attr_embeddings, dim=0)
+                rt.append(attr_embeddings.view(1, -1))
+            rel = torch.from_numpy(np.array(rel, dtype=np.int64)).to(self.device)
+            t = torch.cat(rt, dim=0)
+            h = torch.index_select(rel, 1, torch.tensor([0]).to(self.device))  # 获得第1列
+            h = torch.index_select(self.entity_embeddings, 0, h.view([h.shape[0]]).long())  # view变成标量
+            # h t
+            h = h / torch.norm(h)
+            t = t / torch.norm(t)
+            # rt = 1 - cos
+            return torch.sum(1 - torch.sum(h * t, dim=1))
+
+
+class JointLearning2(nn.Module):
+    def __init__(self, gamma=1, relation_num=22, features_dim=50, use_lstm=False,
+                 dis=l1_norm, device=None, max_char_length=100,
+                 input_samples_dim1=None, input_samples_dim2=None):
+        super(JointLearning2, self).__init__()
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else device
+        self.charset_size = len(encoded_charset)
+        self.KG1 = Model(entity_num=input_samples_dim1, margin=gamma, features_dim=features_dim, dis=dis,
+                         device=device).to(device)
+        self.KG2 = Model(entity_num=input_samples_dim2, margin=gamma, features_dim=features_dim, dis=dis,
+                         device=device).to(device)
+        self.attr = AttrModel(gamma=gamma, use_lstm=use_lstm, relation_num=relation_num, dis=dis,
+                              features_dim=features_dim,
+                              max_char_length=max_char_length, device=device).to(device)
+
+        self.dis = dis
+        self.max_char_length = max_char_length
+        self.input_samples_dim = relation_num
+        self.features_dim = features_dim
+        self.gamma = gamma
+
+    def forward(self, rel_triples1: torch.Tensor, rel_triples2: torch.Tensor,
+                rel_attr_triples1: list, rel_attr_triples2: list):
+        ls1 = self.KG1(rel_triples1)
+        print(ls1)
+        ls2 = self.KG2(rel_triples2)
+        print(ls2)
+        ls3 = self.attr(rel_attr_triples1, self.KG1.entity_embeddings) + self.attr(rel_attr_triples2,
+                                                                                   self.KG2.entity_embeddings)
+        print(ls3)
+        # 合并损失
+        rt = []
+        rel = []
+        # 使用sum求和
+        for triple in rel_attr_triples1:
+            rel.append([triple[0], triple[1]])
+            aa = np.array([encoded_charset[i] for i in triple[-1]], dtype=np.int64)
+            attr_embeddings = torch.index_select(self.attr.char_embeddings, 0, torch.from_numpy(aa).to(self.device))
+            attr_embeddings = torch.sum(attr_embeddings, dim=0)
+            rt.append(attr_embeddings.view(1, -1))
+        rel = torch.from_numpy(np.array(rel, dtype=np.int64)).to(self.device)
+        t = torch.cat(rt, dim=0)
+        h = torch.index_select(rel, 1, torch.tensor([0]).to(self.device))  # 获得第1列
+        h = torch.index_select(self.KG1.entity_embeddings, 0, h.view([h.shape[0]]).long())  # view变成标量
+        # h t
+        h = h / torch.norm(h)
+        t = t / torch.norm(t)
+        # rt = 1 - cos
+        ls4 = torch.sum(1 - torch.sum(h * t, dim=1))
+
+        rt = []
+        rel = []
+        for triple in rel_attr_triples2:
+            rel.append([triple[0], triple[1]])
+            aa = np.array([encoded_charset[i] for i in triple[-1]], dtype=np.int64)
+            attr_embeddings = torch.index_select(self.attr.char_embeddings, 0, torch.from_numpy(aa).to(self.device))
+            attr_embeddings = torch.sum(attr_embeddings, dim=0)
+            rt.append(attr_embeddings.view(1, -1))
+        rel = torch.from_numpy(np.array(rel, dtype=np.int64)).to(self.device)
+        t = torch.cat(rt, dim=0)
+        h = torch.index_select(rel, 1, torch.tensor([0]).to(self.device))  # 获得第1列
+        h = torch.index_select(self.KG2.entity_embeddings, 0, h.view([h.shape[0]]).long())  # view变成标量
+        h = h / torch.norm(h)
+        t = t / torch.norm(t)
+        ls4 += torch.sum(1 - torch.sum(h * t, dim=1))
+        return ls1 + ls2 + ls3 + ls4
+
+    def save(self, path):
+        self.KG1.save(path)
+        self.KG2.save(path)
+        self.attr.save(path)
+
+    def load(self, path):
+        self.KG1.load(path)
+        self.KG2.load(path)
+        self.attr.load(path)
+
+
+# 合并的总的loss
